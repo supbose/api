@@ -1,10 +1,11 @@
 {
-  "versionCode": 10731,
-  "versionName": "1.7.31",
-  "downloadUrl": "app-1.7.31.apk",
-  "changelog": "新增: 配置查看页同步 CDN 兜底基地址 + 空值显式标注",
-  "isForceUpdate": false,
-  "fileSha256": "4c450f86beb9d97afbff15a86ae3fa1741794730b3d3500e83bf1690f6a20dcd",
-  "fileSize": 12888315,
-  "autoUpdate": false
+  "version": "2.1.2",
+  "update": false,
+  "size_bytes": 2374852351,
+  "sha256": "419d300d470337f72a41c13d713fcee20bf5c8acf8cef31f2b34a273708594d7",
+  "url": "https://down.cdn.qcsm.ltd/download/win-unpacked_20260610_102730.zip",
+  "release_date": "2026-06-09T18:23:00.000Z",
+  "changelog": [
+    "修复了某些bugs"
+  ]
 }
