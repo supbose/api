@@ -1,0 +1,10 @@
+{
+  "versionCode": 10731,
+  "versionName": "1.7.31",
+  "downloadUrl": "app-1.7.31.apk",
+  "changelog": "新增: 配置查看页同步 CDN 兜底基地址 + 空值显式标注",
+  "isForceUpdate": false,
+  "fileSha256": "4c450f86beb9d97afbff15a86ae3fa1741794730b3d3500e83bf1690f6a20dcd",
+  "fileSize": 12888315,
+  "autoUpdate": false
+}
