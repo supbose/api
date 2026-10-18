@@ -27,7 +27,7 @@ from pathlib import Path
 # ==================== 配置区 ====================
 # 待压缩文件列表(可自定义增删, 所有文件打包进同一个 zip)
 FILES = [
-    r"D:\WorkspaceProject\cnb\supbose\python\musicdl-server\dist-modular\server.exe",
+    # r"D:\WorkspaceProject\cnb\supbose\python\musicdl-server\dist-modular\server.exe",
     r"D:\WorkspaceProject\cnb\supbose\qsm\src-tauri\target\release\qsm.exe",
 ]
 
