@@ -1,3 +1,9 @@
+
+## v1.0.1-beta.1 (2026-10-18)
+### 📦 构建系统
+
+- [a87fca7](/commit/a87fca70b0c7f4c5b9f0f55ff8837637058bf02d) 构建(build/qsm.py): 调整分卷大小上限为50MB (build/qsm.py)
+
 # Changelog
 
 ## [1.0.1-beta.0] - 2026-10-18
