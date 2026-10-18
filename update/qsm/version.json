@@ -1,10 +1,36 @@
 {
-  "version": "2.1.2",
+  "version": "2.1.3",
   "update": true,
-  "size_bytes": 2374852351,
-  "sha256": "419d300d470337f72a41c13d713fcee20bf5c8acf8cef31f2b34a273708594d7",
-  "url": "https://down.cdn.qcsm.ltd/download/win-unpacked_20260610_102730.zip",
-  "release_date": "2026-06-09T18:23:00.000Z",
+  "size_bytes": 110629439,
+  "url": "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip",
+  "parts": [
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.001",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.002",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.003",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.004",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.005",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.006",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.007",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.008",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.009",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.010",
+    "https://qsw.us.ci/update/qsm/qsm_2.1.3.zip.011"
+  ],
+  "part_sha256": [
+    "d9020f06ab1a4057892f51769369f9a081afbe6c15d813e87c3061f3ac517361",
+    "c41dc5287d28f1b51dcf280f73d96b15da482e6a8ffbeae13fab3eb89ddf2564",
+    "ef55bd2d14afc725cf6eecd128576c2c2c03ca08672e128525df876648b92e69",
+    "0788e741ffff82240b099016dab523229dcdbeed2ffbee20ad362eb37f41a066",
+    "183e63502d38bf2ca142f84be69878d1fb7b1140e4682a90e6840cdacaae6a14",
+    "c74fe1b9afb4e71a5247f532bb2b0e1cf7998296b29afc27ebb695c3a3e69d3e",
+    "f5307874246690e1238b406b6d0d882266b0c48d71748cb0b95d01db5a77392b",
+    "90ff21d5adfc85d56d77ddfef740a956be8a9ae8706ed31193bdaa9e337138ad",
+    "f0092ef345127a1cda9d3e487cba0f8da3b30d30d0741c3181a9adb33616317c",
+    "5e9d49e817595c94b42cb8709d6d53027ca913e7f657753d13641717fb149aa3",
+    "fcac4581d624affb9e0ba5ae15589a04b154dcd2f394cde96e0f25bc530ab994"
+  ],
+  "sha256": "0b558cbfaac1c60fea09e977107eb2c5fae78038c0739d9ffd796e65c27313d7",
+  "release_date": "2026-10-18T07:40:44.000Z",
   "changelog": [
     "修复了某些bugs"
   ]
