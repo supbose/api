@@ -1,20 +1,20 @@
 {
-  "name": "api",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
   "author": "",
-  "license": "ISC",
+  "description": "",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "^11.20.0",
-      "onFail": "download"
+      "onFail": "download",
+      "version": "^11.20.0"
     }
   },
-  "type": "module"
+  "keywords": [],
+  "license": "ISC",
+  "main": "index.js",
+  "name": "api",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "type": "module",
+  "version": "1.0.1-beta.0"
 }
