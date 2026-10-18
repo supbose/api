@@ -7,6 +7,7 @@ qsm 更新包打包脚本
     2. 输出到 update/qsm 目录
     3. 计算 zip 的 sha256 与大小, 按原有格式更新 version.json
     4. 包体超过单卷上限时自动切分为 .001/.002 分卷, version.json 记录 parts 与 part_sha256 清单
+    5. 打包成功后自动清理输出目录中的旧版本打包文件
 
 用法:
     python build/qsm.py [--changelog "日志1;日志2"]
@@ -25,9 +26,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ==================== 配置区 ====================
-# 待压缩文件列表(可自定义增删, 所有文件打包进同一个 zip)
+# 待压缩文件列表(支持单个文件与目录; 目录带 \* 通配内容置于 zip 根目录, 不带通配保留目录名层级)
 FILES = [
-    # r"D:\WorkspaceProject\cnb\supbose\python\musicdl-server\dist-modular\server.exe",
+    r"d:\WorkspaceProject\cnb\supbose\qsm\src-tauri\resources",
+    r"D:\WorkspaceProject\cnb\supbose\python\musicdl-server\dist\nssm.exe",
+    r"D:\WorkspaceProject\cnb\supbose\python\musicdl-server\dist\qsm-server.exe",
     r"D:\WorkspaceProject\cnb\supbose\qsm\src-tauri\target\release\qsm.exe",
 ]
 
@@ -35,7 +38,7 @@ FILES = [
 DOWNLOAD_PREFIX = "https://qsw.us.ci/update/qsm/"
 
 # 单卷大小上限(MB), 包体超过则切分为分卷; 50MB 阈值同时规避 GitHub 100MB 硬限制与 CDN 大文件问题
-VOLUME_SIZE_MB = 50
+VOLUME_SIZE_MB = 5
 
 # 打包输出目录与 version.json 路径
 OUTPUT_DIR = Path(r"D:\WorkspaceProject\github\supbose\api\update\qsm")
@@ -52,11 +55,26 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def make_zip(files, zip_path: Path) -> None:
-    """将文件列表压缩为 zip, 文件置于 zip 根目录"""
+def resolve_entry(entry: str) -> list[tuple[Path, str]]:
+    """解析单个配置项为 (文件路径, zip内路径) 列表; 不存在返回空列表
+
+    目录带 \\* 通配: 内容置于 zip 根目录; 目录不带通配: 保留目录名层级
+    """
+    wildcard = entry.endswith(("\\*", "/*"))
+    p = Path(entry[:-2] if wildcard else entry)
+    if p.is_file():
+        return [(p, p.name)]
+    if p.is_dir():
+        base = p if wildcard else p.parent
+        return [(f, f.relative_to(base).as_posix()) for f in sorted(p.rglob("*")) if f.is_file()]
+    return []
+
+
+def make_zip(entries: list[tuple[Path, str]], zip_path: Path) -> None:
+    """将文件清单压缩为 zip, 单文件置于根目录, 目录内容保持相对结构"""
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for src in files:
-            zf.write(src, arcname=Path(src).name)
+        for src, arc in entries:
+            zf.write(src, arcname=arc)
 
 
 def split_zip(zip_path: Path, volume_size: int) -> list[tuple[Path, str]]:
@@ -84,6 +102,14 @@ def package_volumes(zip_path: Path, volume_size_mb: int) -> list[tuple[Path, str
     for p, _ in parts:
         print(f"  {p.name} ({p.stat().st_size:,} 字节)")
     return parts
+
+
+def clean_old_packages(zip_path: Path) -> None:
+    """删除输出目录中除当前新包(含分卷)外的旧打包文件"""
+    for old in OUTPUT_DIR.glob("qsm_*.zip*"):
+        if old.is_file() and old.name != zip_path.name and not old.name.startswith(zip_path.name + "."):
+            old.unlink()
+            print(f"已删除旧包: {old.name}")
 
 
 def bump_version(version: str) -> str:
@@ -136,10 +162,17 @@ def main() -> int:
 
     version = ask_version()
 
-    # 校验待压缩文件是否存在
-    missing = [p for p in FILES if not Path(p).is_file()]
+    # 展开配置项为实际文件清单(支持文件与目录)
+    resolved = []
+    missing = []
+    for entry in FILES:
+        found = resolve_entry(entry)
+        if found:
+            resolved.extend(found)
+        else:
+            missing.append(entry)
     if missing:
-        print("以下文件不存在, 请检查配置区 FILES:")
+        print("以下文件或目录不存在, 请检查配置区 FILES:")
         for p in missing:
             print(f"  - {p}")
         return 1
@@ -148,8 +181,8 @@ def main() -> int:
 
     zip_name = f"qsm_{version}.zip"
     zip_path = OUTPUT_DIR / zip_name
-    print(f"正在压缩 {len(FILES)} 个文件 -> {zip_path}")
-    make_zip(FILES, zip_path)
+    print(f"正在压缩 {len(resolved)} 个文件 -> {zip_path}")
+    make_zip(resolved, zip_path)
 
     # 先计算完整包大小与 sha256(客户端拼接还原分卷后校验用), 再切分分卷
     size_bytes = zip_path.stat().st_size
@@ -184,6 +217,7 @@ def main() -> int:
     VERSION_FILE.write_text(
         json.dumps(version_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    clean_old_packages(zip_path)
 
     print(f"打包完成: {zip_path}")
     print(f"大小: {version_data['size_bytes']:,} 字节")
