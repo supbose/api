@@ -5,7 +5,7 @@ qsm 更新包打包脚本
 功能:
     1. 将配置区 FILES 中的所有文件压缩为一个 zip 更新包
     2. 输出到 update/qsm 目录
-    3. 计算 zip 的 sha256 与大小, 按原有格式更新 version.json
+    3. 计算包的 sha256 与大小, 按下载前缀各生成一份 version 文件(首个为 version.json)
     4. 包体超过单卷上限时自动切分为 .001/.002 分卷, version.json 记录 parts 与 part_sha256 清单
     5. 打包成功后自动清理输出目录中的旧版本打包文件
 
@@ -34,8 +34,11 @@ FILES = [
     r"D:\WorkspaceProject\cnb\supbose\qsm\src-tauri\target\release\qsm.exe",
 ]
 
-# 下载地址前缀(最终下载地址 = 前缀 + zip 文件名)
-DOWNLOAD_PREFIX = "https://qsw.us.ci/update/qsm/"
+# 下载地址前缀列表(最终下载地址 = 前缀 + zip 文件名); 每个前缀各生成一份 version 文件, 首个为 version.json
+DOWNLOAD_PREFIXES = [
+    "https://qsw.us.ci/update/qsm/",
+    "https://qsc.cdn.qcsm.ltd/update/qsm/",  # TODO: 替换为实际备用下载前缀
+]
 
 # 单卷大小上限(MB), 包体超过则切分为分卷; 50MB 阈值同时规避 GitHub 100MB 硬限制与 CDN 大文件问题
 VOLUME_SIZE_MB = 5
@@ -189,41 +192,45 @@ def main() -> int:
     digest = sha256_of(zip_path)
     parts = package_volumes(zip_path, VOLUME_SIZE_MB)
 
-    version_data = {
-        "version": version,
-        "update": True,
-        "size_bytes": size_bytes,
-        "url": DOWNLOAD_PREFIX + zip_name,
-    }
-
-    # 分卷时记录各分卷下载地址与 sha256, 供客户端逐卷下载校验
-    if parts:
-        version_data["parts"] = [DOWNLOAD_PREFIX + p.name for p, _ in parts]
-        version_data["part_sha256"] = [h for _, h in parts]
-
-    version_data["sha256"] = digest
-    version_data["release_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    version_data["changelog"] = []
-
     # 未指定 --changelog 时保留原日志
     if args.changelog:
-        version_data["changelog"] = [s.strip() for s in args.changelog.split(";") if s.strip()]
+        changelog = [s.strip() for s in args.changelog.split(";") if s.strip()]
     elif VERSION_FILE.is_file():
-        old = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
-        version_data["changelog"] = old.get("changelog", [])
+        changelog = json.loads(VERSION_FILE.read_text(encoding="utf-8")).get("changelog", [])
+    else:
+        changelog = []
 
-    # version.json 不存在时自动创建
-    created = not VERSION_FILE.is_file()
-    VERSION_FILE.write_text(
-        json.dumps(version_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # 每个下载前缀生成一份 version 文件, 首个固定为 version.json, 其余为 version_2/3...
+    release_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    version_files = [VERSION_FILE] + [
+        OUTPUT_DIR / f"version_{i}.json" for i in range(2, len(DOWNLOAD_PREFIXES) + 1)
+    ]
+    for prefix, vfile in zip(DOWNLOAD_PREFIXES, version_files):
+        version_data = {
+            "version": version,
+            "update": True,
+            "size_bytes": size_bytes,
+            "url": prefix + zip_name,
+        }
+        # 分卷时记录各分卷下载地址与 sha256, 供客户端逐卷下载校验
+        if parts:
+            version_data["parts"] = [prefix + p.name for p, _ in parts]
+            version_data["part_sha256"] = [h for _, h in parts]
+        version_data["sha256"] = digest
+        version_data["release_date"] = release_date
+        version_data["changelog"] = changelog
+        created = not vfile.is_file()
+        vfile.write_text(
+            json.dumps(version_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"{'已创建' if created else '已更新'}: {vfile}")
+
     clean_old_packages(zip_path)
 
     print(f"打包完成: {zip_path}")
     print(f"大小: {version_data['size_bytes']:,} 字节")
     print(f"sha256: {version_data['sha256']}")
     print(f"下载地址: {version_data['url']}")
-    print(f"{'已创建' if created else '已更新'}: {VERSION_FILE}")
     return 0
 
 
