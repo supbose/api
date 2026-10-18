@@ -34,8 +34,8 @@ FILES = [
 # 下载地址前缀(最终下载地址 = 前缀 + zip 文件名)
 DOWNLOAD_PREFIX = "https://qsw.us.ci/update/qsm/"
 
-# 单卷大小上限(MB), 包体超过则切分为分卷; 95MB 可规避 GitHub 单文件 100MB 硬限制
-VOLUME_SIZE_MB = 10
+# 单卷大小上限(MB), 包体超过则切分为分卷; 50MB 阈值同时规避 GitHub 100MB 硬限制与 CDN 大文件问题
+VOLUME_SIZE_MB = 50
 
 # 打包输出目录与 version.json 路径
 OUTPUT_DIR = Path(r"D:\WorkspaceProject\github\supbose\api\update\qsm")
