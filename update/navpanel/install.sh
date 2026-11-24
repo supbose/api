@@ -9,6 +9,7 @@
 #   2) 一行命令远程安装（脚本被单独下载时自动拉源码）
 #        curl -fsSL <install.sh 地址> -o install.sh && bash install.sh <管理员口令>
 #        curl -fsSL <install.sh 地址> | bash -s -- <管理员口令>
+#        curl -fsSL <install.sh 地址> | bash        # 全默认安装，口令随机生成并在末尾打印
 #     源码获取顺序：--archive 指定的 tar.gz → 仓库 archive 直链 → git clone
 #     用 --repo / --ref 指定仓库地址与分支（默认 https://cnb.cool/supbose/python/siteWeb，main）
 #
@@ -62,6 +63,17 @@ fi
 log() { printf '\033[32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[警告]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[失败]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# 有些环境（systemd 精简 PATH、cron、容器）里 /usr/sbin 不在 PATH，先找 PATH 再找常见绝对路径
+detect_cmd() { # detect_cmd 名称 [候选绝对路径...] → 输出可执行路径
+  local name="$1" candidate
+  shift
+  if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
+  for candidate in "$@"; do
+    [[ -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+  done
+  return 1
+}
 
 fetch_to() { # fetch_to URL DEST
   if command -v curl >/dev/null 2>&1; then
@@ -200,15 +212,17 @@ done
 if [[ ! -e "$SOURCE_DIR/web/index.html" && ! -e "$SOURCE_DIR/dist/web/index.html" ]]; then
   die "源码不完整：web/ 与 dist/web 都不存在，没有可用的前端产物"
 fi
-command -v python3 >/dev/null || die "缺少 python3"
+PYTHON_BIN="$(detect_cmd python3 /usr/bin/python3 /usr/local/bin/python3)" \
+  || die "缺少 python3（Debian/Ubuntu 需 apt install python3）"
 [[ "$PORT" =~ ^[0-9]+$ ]] || die "端口必须是数字：$PORT"
 
 # 运行用户与组
 if [[ $CREATE_USER -eq 1 ]]; then
   if ! id -u "$RUN_USER" >/dev/null 2>&1; then
-    command -v useradd >/dev/null || die "缺少 useradd（可 --no-user 跳过用户创建）"
+    USERADD_BIN="$(detect_cmd useradd /usr/sbin/useradd /sbin/useradd)" \
+      || die "缺少 useradd（Debian/Ubuntu 装 passwd 包；或加 --no-user 跳过用户创建）"
     log "创建系统用户 $RUN_USER"
-    useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$RUN_USER" \
+    "$USERADD_BIN" --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$RUN_USER" \
       || die "创建用户失败"
   else
     log "用户 $RUN_USER 已存在，跳过创建"
@@ -226,8 +240,8 @@ if [[ "$SOURCE_DIR" == "$(readlink -f "$INSTALL_DIR")" ]]; then
 else
   log "复制代码到 $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
-  if command -v rsync >/dev/null; then
-    rsync -a --delete \
+  if RSYNC_BIN="$(detect_cmd rsync /usr/bin/rsync /usr/local/bin/rsync)"; then
+    "$RSYNC_BIN" -a --delete \
       --exclude '.git' --exclude '.env' --exclude 'data/' \
       --exclude 'dist/release/' --exclude 'dist/publish/' \
       --exclude '.venv/' --exclude '.screenshots/' --exclude '*.zip' \
@@ -247,7 +261,7 @@ fi
 # ---------- 2. 虚拟环境与依赖 ----------
 if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
   log "创建虚拟环境 $INSTALL_DIR/.venv"
-  python3 -m venv "$INSTALL_DIR/.venv" || die "创建 venv 失败（Debian/Ubuntu 需先 apt install python3-venv）"
+  "$PYTHON_BIN" -m venv "$INSTALL_DIR/.venv" || die "创建 venv 失败（Debian/Ubuntu 需先 apt install python3-venv）"
 fi
 if [[ $INSTALL_DEPS -eq 1 ]]; then
   log "安装运行依赖"
@@ -333,7 +347,8 @@ chown -R "$RUN_USER:$RUN_GROUP" "$INSTALL_DIR/dist" 2>/dev/null || true
 
 # ---------- 6. systemd 单元 ----------
 if [[ $INSTALL_SERVICE -eq 1 ]]; then
-  command -v systemctl >/dev/null || die "缺少 systemctl（可用 --no-systemd 只装代码）"
+  SYSTEMCTL_BIN="$(detect_cmd systemctl /usr/bin/systemctl /bin/systemctl)" \
+    || die "缺少 systemctl（可用 --no-systemd 只装代码）"
   UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
   log "生成 $UNIT_PATH"
   sed \
@@ -350,14 +365,14 @@ if [[ $INSTALL_SERVICE -eq 1 ]]; then
     sed -i -e "s#^User=.*#User=$RUN_USER#" -e "s#^Group=.*#Group=$RUN_GROUP#" "$UNIT_PATH"
   fi
   chmod 0644 "$UNIT_PATH"
-  systemctl daemon-reload
+  "$SYSTEMCTL_BIN" daemon-reload
 fi
 
 # ---------- 7. 启动与自检 ----------
 if [[ $INSTALL_SERVICE -eq 1 && $START_SERVICE -eq 1 ]]; then
   log "启动服务 $SERVICE_NAME"
-  systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || warn "enable 失败，可稍后手动 systemctl enable $SERVICE_NAME"
-  systemctl restart "$SERVICE_NAME" || die "启动失败：journalctl -u $SERVICE_NAME -n 50 查看原因"
+  "$SYSTEMCTL_BIN" enable "$SERVICE_NAME" >/dev/null 2>&1 || warn "enable 失败，可稍后手动 systemctl enable $SERVICE_NAME"
+  "$SYSTEMCTL_BIN" restart "$SERVICE_NAME" || die "启动失败：journalctl -u $SERVICE_NAME -n 50 查看原因"
 
   HEALTH="http://127.0.0.1:${PORT}/api/health"
   for _ in $(seq 1 30); do
@@ -368,7 +383,7 @@ if [[ $INSTALL_SERVICE -eq 1 && $START_SERVICE -eq 1 ]]; then
     fi
     sleep 1
   done
-  systemctl is-active --quiet "$SERVICE_NAME" || die "服务未处于 active：journalctl -u $SERVICE_NAME -n 50"
+  "$SYSTEMCTL_BIN" is-active --quiet "$SERVICE_NAME" || die "服务未处于 active：journalctl -u $SERVICE_NAME -n 50"
 fi
 
 # ---------- 8. 结果摘要 ----------
