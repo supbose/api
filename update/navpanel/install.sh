@@ -30,6 +30,8 @@ ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 PIP_INDEX="${PIP_INDEX:-}"
 CREATE_USER=1
+AUTO_APT=1
+CHECK_DEPS=0
 INSTALL_SERVICE=1
 INSTALL_DEPS=1
 START_SERVICE=1
@@ -73,6 +75,131 @@ detect_cmd() { # detect_cmd 名称 [候选绝对路径...] → 输出可执行�
     [[ -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
   done
   return 1
+}
+
+# ------- 依赖自检与按需安装（缺什么装什么） -------
+dep_have() { detect_cmd "$@" >/dev/null 2>&1; }
+
+detect_pkg_mgr() {
+  local m
+  for m in apt-get dnf yum apk zypper; do
+    command -v "$m" >/dev/null 2>&1 && { printf '%s' "$m"; return 0; }
+  done
+  return 1
+}
+
+pkg_name_for() { # pkg_name_for <依赖> <包管理器> → 包名（空串表示该系统没有对应包）
+  case "$1:$2" in
+    python3:*)                                        printf 'python3' ;;
+    venv:apt-get)                                     printf 'python3-venv' ;;
+    venv:dnf|venv:yum|venv:zypper)                    printf 'python3-pip' ;;
+    venv:apk)                                         printf 'py3-pip' ;;
+    useradd:apt-get)                                  printf 'passwd' ;;
+    useradd:dnf|useradd:yum)                          printf 'shadow-utils' ;;
+    useradd:zypper)                                   printf 'shadow' ;;
+    useradd:apk)                                      printf 'shadow' ;;
+    systemctl:apt-get|systemctl:dnf|systemctl:yum|systemctl:zypper) printf 'systemd' ;;
+    systemctl:apk)                                    printf '' ;;
+    curl:*)                                           printf 'curl' ;;
+    tar:*)                                            printf 'tar' ;;
+    sha256sum:apt-get|sha256sum:dnf|sha256sum:yum|sha256sum:zypper|sha256sum:apk) printf 'coreutils' ;;
+    *)                                                printf '' ;;
+  esac
+}
+
+install_pkgs() { # install_pkgs <包管理器> <包...>
+  local mgr="$1" p rc=0
+  shift
+  [[ $# -gt 0 ]] || return 0
+  case "$mgr" in
+    apt-get)
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update -qq >/dev/null 2>&1 || warn "apt-get update 失败，继续尝试安装"
+      if apt-get install -y -qq "$@" >/dev/null 2>&1; then
+        log "已安装：$*"
+        return 0
+      fi
+      # 某个包在当前源里不存在时，逐个装，能装的照装
+      for p in "$@"; do
+        if apt-get install -y -qq "$p" >/dev/null 2>&1; then
+          log "已安装：$p"
+        else
+          warn "安装 $p 失败（跳过）"
+          rc=1
+        fi
+      done ;;
+    dnf) dnf install -y -q "$@" >/dev/null 2>&1 || rc=1 ;;
+    yum) yum install -y -q "$@" >/dev/null 2>&1 || rc=1 ;;
+    apk) apk add --no-cache "$@" >/dev/null 2>&1 || rc=1 ;;
+    zypper) zypper --non-interactive install "$@" >/dev/null 2>&1 || rc=1 ;;
+    *) warn "未识别的包管理器：$mgr"; rc=1 ;;
+  esac
+  return $rc
+}
+
+ensure_deps() { # 检查运行依赖，缺什么装什么；--check-deps 只查，--no-auto-deps 只提示
+  local mgr missing=() pkgs=() uniq=() p pkg ver exists
+  mgr="$(detect_pkg_mgr || true)"
+
+  [[ -n "${PYTHON_BIN:-}" ]] || missing+=("python3")
+  if [[ -n "${PYTHON_BIN:-}" ]] && ! "$PYTHON_BIN" -c 'import ensurepip' >/dev/null 2>&1; then
+    missing+=("venv")
+  fi
+  dep_have curl || missing+=("curl")
+  dep_have tar || missing+=("tar")
+  if [[ -n "$SHA256_EXPECT" ]] && ! dep_have sha256sum; then
+    missing+=("sha256sum")
+  fi
+  if [[ $CREATE_USER -eq 1 ]] && ! dep_have useradd /usr/sbin/useradd /sbin/useradd; then
+    missing+=("useradd")
+  fi
+  if [[ $INSTALL_SERVICE -eq 1 ]] && ! dep_have systemctl /usr/bin/systemctl /bin/systemctl; then
+    missing+=("systemctl")
+  fi
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    log "依赖检查通过：python3 + venv、curl、tar 以及运行所需命令都已就绪"
+    if [[ $CHECK_DEPS -eq 1 ]]; then exit 0; fi
+    return 0
+  fi
+
+  log "缺少依赖：${missing[*]}"
+  if [[ $CHECK_DEPS -eq 1 ]]; then
+    warn "--check-deps：只做检查，未安装任何包（包管理器：${mgr:-未识别}）"
+    return 1
+  fi
+
+  for p in "${missing[@]}"; do
+    pkg="$(pkg_name_for "$p" "$mgr")"
+    [[ -n "$pkg" ]] && pkgs+=("$pkg")
+  done
+  if [[ "$mgr" == "apt-get" && -n "${PYTHON_BIN:-}" && " ${missing[*]} " == *" venv "* ]]; then
+    ver="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+    [[ -n "$ver" ]] && pkgs+=("python${ver}-venv")
+  fi
+  for p in "${pkgs[@]}"; do
+    exists=0
+    for pkg in "${uniq[@]}"; do [[ "$pkg" == "$p" ]] && { exists=1; break; }; done
+    [[ $exists -eq 0 ]] && uniq+=("$p")
+  done
+  pkgs=("${uniq[@]}")
+
+  if [[ $AUTO_APT -eq 0 ]]; then
+    die "已禁用自动安装（--no-auto-deps）：请先手动安装 ${missing[*]}（例：${mgr:-apt-get} install -y ${pkgs[*]:-${missing[*]}}）再重跑"
+  fi
+  [[ -n "$mgr" ]] || die "未识别包管理器（apt-get/dnf/yum/apk/zypper），请手动安装：${missing[*]}"
+  log "使用 $mgr 安装：${pkgs[*]}"
+  install_pkgs "$mgr" "${pkgs[@]}" || warn "部分包安装失败，继续按现有能力尝试"
+
+  [[ -n "${PYTHON_BIN:-}" ]] || PYTHON_BIN="$(detect_cmd python3 /usr/bin/python3 /usr/local/bin/python3 || true)"
+  [[ -n "${PYTHON_BIN:-}" ]] || die "python3 仍未就绪：请手动安装 python3 后重跑"
+  if ! "$PYTHON_BIN" -c 'import ensurepip' >/dev/null 2>&1; then
+    "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null 2>&1 || true
+  fi
+  "$PYTHON_BIN" -c 'import ensurepip' >/dev/null 2>&1 \
+    || die "venv 缺 ensurepip：手动执行 ${mgr} install -y python3-venv（或 python3.X-venv）后重跑"
+  dep_have curl || dep_have wget || die "仍然没有 curl 或 wget：手动安装后重跑"
+  log "依赖补齐完成"
 }
 
 fetch_to() { # fetch_to URL DEST
@@ -121,6 +248,9 @@ fetch_source() {
     fi
     tar -xzf "$tgz" -C "$TMP_SOURCE" || die "解包失败：$url"
     SOURCE_DIR="$(find "$TMP_SOURCE" -mindepth 1 -maxdepth 1 -type d | head -1)"
+  elif [[ -z "$ARCHIVE_URL" ]]; then
+        warn "这份 install.sh 里没有内置源码包地址（第 3 行缺 export NAVPANEL_ARCHIVE_URL），通常是把仓库的 deploy/install.sh 原样传到了服务器"
+    die "改用打包生成的 install.sh（dist/publish/install.sh），或显式给地址：bash install.sh --archive https://你的域名/navpanel/navpanel.tar.gz"
   elif command -v git >/dev/null 2>&1; then
     log "压缩包直链均不可用，改用 git clone"
     git clone --depth 1 --branch "$REF" "$REPO_URL" "$TMP_SOURCE/repo" \
@@ -144,6 +274,9 @@ NavPanel 一键安装 / 升级脚本（HTML 版生产部署）
 脚本被单独下载执行时（当前目录没有 app/main.py、web/index.html），
 会自动按 --repo / --ref 拉取源码（tar.gz 直链优先，失败回退 git clone）。
 
+打包生成的 install.sh 会在第 3 行内置源码包地址（export NAVPANEL_ARCHIVE_URL）；
+直接把仓库里的 deploy/install.sh 传上服务器没有这一行，需用 --archive 指定。
+
 可选参数：
   --install-dir DIR     代码安装目录，默认 /opt/navpanel
   --data-dir DIR        数据目录（SQLite/图标/背景图），默认 /var/lib/navpanel
@@ -160,6 +293,9 @@ NavPanel 一键安装 / 升级脚本（HTML 版生产部署）
   --no-user             不创建系统用户（已自备用户时用）
   --no-systemd          不安装 systemd 单元（只装代码与产物，例如容器内手动启动）
   --no-deps             跳过 pip 安装（离线/已预装依赖）
+  --no-auto-apt         等价 --no-auto-deps：缺依赖时只提示，不自动安装
+  --no-auto-deps        缺依赖（python3-venv/useradd/curl/tar 等）时只提示，不自动安装
+  --check-deps          只检查运行依赖是否齐全并退出（不装包、不改系统）
   --no-start            装完不启动服务
   --force               已存在 .env 时也重建（会重新生成密钥与口令）
   -h, --help            显示本帮助
@@ -178,6 +314,8 @@ while [[ $# -gt 0 ]]; do
     --no-user) CREATE_USER=0; shift ;;
     --no-systemd) INSTALL_SERVICE=0; shift ;;
     --no-deps) INSTALL_DEPS=0; shift ;;
+    --no-auto-apt|--no-auto-deps) AUTO_APT=0; shift ;;
+    --check-deps) CHECK_DEPS=1; shift ;;
     --no-start) START_SERVICE=0; shift ;;
     --force) FORCE_ENV=1; shift ;;
     --repo) REPO_URL="${2:?缺地址}"; shift 2 ;;
@@ -199,8 +337,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ---------- 0. 前置检查 ----------
-[[ ${EUID:-$(id -u)} -eq 0 ]] || die "需要 root 权限执行（sudo bash deploy/install.sh）"
+# ---------- 0. 前置检查与依赖 ----------
+[[ $CHECK_DEPS -eq 1 || ${EUID:-$(id -u)} -eq 0 ]] || die "需要 root 权限执行（sudo bash deploy/install.sh）"
+[[ "$PORT" =~ ^[0-9]+$ ]] || die "端口必须是数字：$PORT"
+PYTHON_BIN="${PYTHON_BIN:-$(detect_cmd python3 /usr/bin/python3 /usr/local/bin/python3 || true)}"
+if ! ensure_deps; then
+  if [[ $CHECK_DEPS -eq 1 ]]; then
+    warn "依赖检查未通过"
+    exit 1
+  fi
+fi
+[[ -n "${PYTHON_BIN:-}" ]] || die "缺少 python3：安装后重跑（或先用 --check-deps 看缺什么）"
 if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/app/main.py" ]]; then
   fetch_source
 fi
@@ -212,9 +359,6 @@ done
 if [[ ! -e "$SOURCE_DIR/web/index.html" && ! -e "$SOURCE_DIR/dist/web/index.html" ]]; then
   die "源码不完整：web/ 与 dist/web 都不存在，没有可用的前端产物"
 fi
-PYTHON_BIN="$(detect_cmd python3 /usr/bin/python3 /usr/local/bin/python3)" \
-  || die "缺少 python3（Debian/Ubuntu 需 apt install python3）"
-[[ "$PORT" =~ ^[0-9]+$ ]] || die "端口必须是数字：$PORT"
 
 # 运行用户与组
 if [[ $CREATE_USER -eq 1 ]]; then
