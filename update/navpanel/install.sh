@@ -10,8 +10,8 @@
 #        curl -fsSL <install.sh 地址> -o install.sh && bash install.sh <管理员口令>
 #        curl -fsSL <install.sh 地址> | bash -s -- <管理员口令>
 #        curl -fsSL <install.sh 地址> | bash        # 全默认安装，口令随机生成并在末尾打印
-#     源码获取顺序：--archive 指定的 tar.gz → 仓库 archive 直链 → git clone
-#     用 --repo / --ref 指定仓库地址与分支（默认 https://cnb.cool/supbose/python/siteWeb，main）
+#     源码包地址：打包时注入的 export NAVPANEL_ARCHIVE_URL（可用 --archive 覆盖）
+#     没有地址就直接报错退出，不回退仓库直链、也不 git clone
 #
 # 已安装过再次执行 = 升级：代码覆盖、依赖更新、前端重建、服务重启；.env 与数据目录不动
 # （除非显式 --force 重建 .env）。
@@ -43,8 +43,6 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 else
   SOURCE_DIR=""   # 通过管道执行（curl | bash），没有脚本文件路径
 fi
-REPO_URL="${NAVPANEL_REPO_URL:-https://cnb.cool/supbose/python/siteWeb}"
-REF="${NAVPANEL_REF:-main}"
 ARCHIVE_URL="${NAVPANEL_ARCHIVE_URL:-}"
 TMP_SOURCE=""
 POSITIONAL_PASSWORD=0
@@ -212,57 +210,35 @@ fetch_to() { # fetch_to URL DEST
   fi
 }
 
-archive_candidates() {
-  local repo="${REPO_URL%/}" ref="$REF" name
-  name="$(basename "$repo")"
-  [[ -n "$ARCHIVE_URL" ]] && printf '%s\n' "$ARCHIVE_URL"
-  [[ "$repo" == *github.com* ]] && printf '%s\n' "$repo/archive/refs/heads/$ref.tar.gz"
-  printf '%s\n' \
-    "$repo/-/archive/$ref/$name-$ref.tar.gz" \
-    "$repo/-/archive/$ref.tar.gz" \
-    "$repo/archive/refs/heads/$ref.tar.gz" \
-    "$repo/-/archive/refs/heads/$ref.tar.gz"
-}
-
 fetch_source() {
   TMP_SOURCE="$(mktemp -d 2>/dev/null)" || die "无法创建临时目录（检查 TMPDIR=${TMPDIR:-/tmp} 是否存在且可写）"
   trap 'rm -rf -- "${TMP_SOURCE:?}"' EXIT
-  local tgz="$TMP_SOURCE/src.tar.gz" url="" candidate
-  log "本地没有源码，从 ${REPO_URL}（ref=${REF}）获取"
-  while IFS= read -r candidate; do
-    [[ -n "$candidate" ]] || continue
-    if fetch_to "$candidate" "$tgz" 2>/dev/null && tar -tzf "$tgz" >/dev/null 2>&1; then
-      url="$candidate"
-      break
-    fi
-  done < <(archive_candidates)
-  if [[ -n "$url" ]]; then
-    log "已下载源码包：$url"
-    if [[ -n "$SHA256_EXPECT" ]]; then
-      command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum，无法校验下载包"
-      local actual
-      actual="$(sha256sum "$tgz" | cut -d' ' -f1)"
-      [[ "$actual" == "$SHA256_EXPECT" ]] \
-        || die "下载包校验失败：期望 $SHA256_EXPECT，实际 $actual（可能是镜像未更新或文件被替换）"
-      log "校验通过：sha256 $actual"
-    fi
-    tar -xzf "$tgz" -C "$TMP_SOURCE" || die "解包失败：$url"
-    SOURCE_DIR="$(find "$TMP_SOURCE" -mindepth 1 -maxdepth 1 -type d | head -1)"
-  elif [[ -z "$ARCHIVE_URL" ]]; then
-        warn "这份 install.sh 里没有内置源码包地址（第 3 行缺 export NAVPANEL_ARCHIVE_URL），通常是把仓库的 deploy/install.sh 原样传到了服务器"
-    die "改用打包生成的 install.sh（dist/publish/install.sh），或显式给地址：bash install.sh --archive https://你的域名/navpanel/navpanel.tar.gz"
-  elif command -v git >/dev/null 2>&1; then
-    log "压缩包直链均不可用，改用 git clone"
-    git clone --depth 1 --branch "$REF" "$REPO_URL" "$TMP_SOURCE/repo" \
-      || die "git clone 失败：检查仓库地址与访问权限（私有仓库需带令牌的 URL，或改用 --archive 指定可访问的 tar.gz）"
-    SOURCE_DIR="$TMP_SOURCE/repo"
-  else
-    die "无法获取源码：压缩包直链不可用且没有 git；用 --archive <tar.gz> 或 --repo <git 地址> 指定可访问来源"
+  local tgz="$TMP_SOURCE/src.tar.gz" actual
+
+  # 只认源码包地址：打包产物第 3 行注入，或命令行 --archive 覆盖。
+  # 不回退仓库直链、也不 git clone：私有仓库拉不到，只会多绕几圈、把真实原因盖住。
+  if [[ -z "$ARCHIVE_URL" ]]; then
+    warn "这份 install.sh 里没有源码包地址（缺第 3 行 export NAVPANEL_ARCHIVE_URL）：多半是把仓库的 deploy/install.sh 原样传上了服务器"
+    die "缺源码包地址：请上传打包生成的 install.sh（dist/publish/install.sh），或显式指定 bash install.sh --archive https://qsw.us.ci/update/navpanel/navpanel.tar.gz"
   fi
+
+  log "下载源码包：$ARCHIVE_URL"
+  fetch_to "$ARCHIVE_URL" "$tgz" 2>/dev/null || die "源码包下载失败：$ARCHIVE_URL（检查地址、权限与网络）"
+  tar -tzf "$tgz" >/dev/null 2>&1 || die "下载到的不是有效的 tar.gz：$ARCHIVE_URL（可能是站点兜底页或文件损坏）"
+
+  if [[ -n "$SHA256_EXPECT" ]]; then
+    command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum，无法校验下载包"
+    actual="$(sha256sum "$tgz" | cut -d' ' -f1)"
+    [[ "$actual" == "$SHA256_EXPECT" ]] \
+      || die "源码包校验失败：期望 $SHA256_EXPECT，实际 $actual（镜像未更新或文件被替换）"
+    log "校验通过：sha256 $actual"
+  fi
+
+  tar -xzf "$tgz" -C "$TMP_SOURCE" || die "解包失败：$ARCHIVE_URL"
+  SOURCE_DIR="$(find "$TMP_SOURCE" -mindepth 1 -maxdepth 1 -type d | head -1)"
   [[ -f "$SOURCE_DIR/app/main.py" ]] || die "取到的源码不完整（缺 app/main.py）：$SOURCE_DIR"
   log "源码就绪：$SOURCE_DIR"
 }
-
 usage() {
   cat <<'EOF'
 NavPanel 一键安装 / 升级脚本（HTML 版生产部署）
@@ -272,7 +248,10 @@ NavPanel 一键安装 / 升级脚本（HTML 版生产部署）
   一行命令：curl -fsSL <install.sh 地址> | bash -s -- [参数] [管理员口令]
 
 脚本被单独下载执行时（当前目录没有 app/main.py、web/index.html），
-会自动按 --repo / --ref 拉取源码（tar.gz 直链优先，失败回退 git clone）。
+会下载第 3 行内置的源码包地址（export NAVPANEL_ARCHIVE_URL），可用 --archive 覆盖。
+
+没有源码包地址就直接报错退出（不回退仓库直链、也不 git clone）；
+把仓库里的 deploy/install.sh 直接传上服务器时必须配 --archive 才能用。
 
 打包生成的 install.sh 会在第 3 行内置源码包地址（export NAVPANEL_ARCHIVE_URL）；
 直接把仓库里的 deploy/install.sh 传上服务器没有这一行，需用 --archive 指定。
@@ -285,8 +264,6 @@ NavPanel 一键安装 / 升级脚本（HTML 版生产部署）
   --admin-password PWD  管理员口令，默认随机生成并写入 .env
   --run-user USER       运行用户，默认 navpanel（--no-user 时不改）
   --pip-index URL       pip 镜像源，例如 https://pypi.tuna.tsinghua.edu.cn/simple
-  --repo URL            源码仓库地址，默认 https://cnb.cool/supbose/python/siteWeb
-  --ref BRANCH          git 分支或标签，默认 main
   --archive URL         直接指定源码 tar.gz 地址（优先级最高，私有仓库可用带签名的临时链接）
   --sha256 HEX          下载源码包后校验 SHA256，不匹配则拒绝安装（可从 SHA256SUMS 取）
   --wizard              进入交互式安装向导（安装/卸载、域名与 SSL、镜像源）
@@ -318,8 +295,6 @@ while [[ $# -gt 0 ]]; do
     --check-deps) CHECK_DEPS=1; shift ;;
     --no-start) START_SERVICE=0; shift ;;
     --force) FORCE_ENV=1; shift ;;
-    --repo) REPO_URL="${2:?缺地址}"; shift 2 ;;
-    --ref) REF="${2:?缺分支}"; shift 2 ;;
     --archive) ARCHIVE_URL="${2:?缺地址}"; shift 2 ;;
     --sha256) SHA256_EXPECT="${2:?缺校验值}"; shift 2 ;;
     --wizard) : ; shift ;;  # 已在前面 exec，这里兜底
