@@ -1,6 +1,6 @@
-version: 2.0.1-beta.12
-built: 2026-11-24 21:19:51 中国标准时间
+version: 2.0.1-beta.14
+built: 2026-11-24 21:42:09 中国标准时间
 archive: navpanel.tar.gz
-sha256: d58cae1d1b6542a7f16dab91a51bcd6e54489128f9862259e678a559c415902c
+sha256: 90c5fbfe426d97c29bf4f86f038036e2d7557a879d210779582bae44b7b7c6ff
 install: install.sh
-install_sha256: 245569948ae9348331eab8545b1a68fd387cb5f44b746063481761eed6f7df4f
+install_sha256: eccc7ae32cfb97d0959ac279e710ad2e6e867d0b3bfb9d26ce3eb999dac34d2d

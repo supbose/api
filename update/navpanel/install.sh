@@ -378,15 +378,32 @@ else
 fi
 
 # ---------- 2. 虚拟环境与依赖 ----------
-if [[ ! -x "$INSTALL_DIR/.venv/bin/python" ]]; then
-  log "创建虚拟环境 $INSTALL_DIR/.venv"
-  "$PYTHON_BIN" -m venv "$INSTALL_DIR/.venv" || die "创建 venv 失败（Debian/Ubuntu 需先 apt install python3-venv）"
+VENV_DIR="$INSTALL_DIR/.venv"
+venv_has_pip() { [[ -x "$VENV_DIR/bin/python" ]] && "$VENV_DIR/bin/python" -m pip --version >/dev/null 2>&1; }
+
+# 旧版脚本在 ensurepip 缺失时只建出“有 python、没 pip”的半成品 venv；
+# 复用它在 pip 阶段必炸，所以先验 pip，不可用就删掉重建
+if [[ -e "$VENV_DIR" ]] && ! venv_has_pip; then
+  warn "已有虚拟环境不可用（缺 pip），删除后重建：$VENV_DIR"
+  rm -rf -- "$VENV_DIR" || die "无法删除旧的虚拟环境：$VENV_DIR（请手动删除后重跑）"
 fi
+if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+  log "创建虚拟环境 $VENV_DIR"
+  "$PYTHON_BIN" -m venv "$VENV_DIR" || die "创建 venv 失败（Debian/Ubuntu 需先 apt install python3-venv）"
+fi
+if ! venv_has_pip; then
+  log "venv 里没有 pip，用 ensurepip 引导"
+  "$VENV_DIR/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+  "$VENV_DIR/bin/python" -m ensurepip --default-pip >/dev/null 2>&1 || true
+fi
+venv_has_pip || die "venv 里装不出 pip：删除 $VENV_DIR 后重跑，或先 apt install -y python3-venv"
+
 if [[ $INSTALL_DEPS -eq 1 ]]; then
   log "安装运行依赖"
   PIP_ARGS=(install -q -r "$INSTALL_DIR/requirements.txt")
-  [[ -n "$PIP_INDEX" ]] && PIP_ARGS+=(--index-url "$PIP_INDEX")
-  "$INSTALL_DIR/.venv/bin/python" -m pip "${PIP_ARGS[@]}" || die "pip 安装失败（可加 --pip-index 换源）"
+  if [[ -n "$PIP_INDEX" ]]; then PIP_ARGS+=(--index-url "$PIP_INDEX"); fi
+  "$VENV_DIR/bin/python" -m pip "${PIP_ARGS[@]}" \
+    || die "pip 安装依赖失败（venv=$VENV_DIR；网络或镜像不通可加 --pip-index 换源，pip 原始报错见上方）"
 else
   warn "--no-deps：跳过依赖安装，启动前请确保 venv 里已有依赖"
 fi
